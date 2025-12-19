@@ -1,83 +1,116 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const Expense = require('./models/Expense'); // <--- Importing the model we just made
+const bodyParser = require('body-parser');
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+
+// Import your Models
+const Expense = require('./models/Expense');
+// Make sure you created models/MerchantRule.js first!
+const MerchantRule = require('./models/MerchantRule'); 
 
 const app = express();
-const PORT = 3000;
-
 app.use(cors());
-app.use(express.json());
+app.use(bodyParser.json());
 
-// --- DATABASE CONNECTION ---
-// If you are using MongoDB Atlas (Cloud), replace this URL with your cloud string
-const MONGO_URI = 'mongodb+srv://someone60600:utsha4035Nandi@cluster0.vdk9sig.mongodb.net/?appName=Cluster0';
+// ==========================================
+// ⚠️ IMPORTANT: FILL IN YOUR KEYS BELOW ⚠️
+// ==========================================
+const MONGO_DB_URL = "mongodb+srv://... (mongodb+srv://someone60600:utsha4035Nandi@cluster0.vdk9sig.mongodb.net/?appName=Cluster0) ..."; 
+const GEMINI_API_KEY = "AIzaSy... (AIzaSyBr5dA-JVVwvihra9Dq-nnf2w-EEvNY1j0) ...";
 
-mongoose.connect(MONGO_URI)
-    .then(() => console.log('✅ MongoDB Connected Successfully'))
-    .catch(err => console.error('❌ MongoDB Connection Error:', err));
+// Initialize Gemini
+const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
-// --- API ROUTES ---
+// Connect to MongoDB
+mongoose.connect(MONGO_DB_URL)
+  .then(() => console.log('✅ MongoDB Connected'))
+  .catch(err => console.error('❌ MongoDB Connection Error:', err));
 
-// 1. GET ALL EXPENSES
-app.get('/api/expenses', async (req, res) => {
-    try {
-        const expenses = await Expense.find();
-        res.json(expenses);
-    } catch (err) {
-        res.status(500).json({ message: err.message });
+// ==========================================
+// 🚀 ROUTE 1: HYBRID SMS ANALYSIS (New)
+// ==========================================
+app.post('/api/analyze-sms', async (req, res) => {
+  try {
+    const { smsText } = req.body;
+    if (!smsText) return res.status(400).json({ message: "No SMS text provided" });
+
+    // 1. Ask Gemini to extract details
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const prompt = `
+      Analyze this SMS: "${smsText}"
+      Return strictly JSON (no markdown):
+      {
+        "amount": number,
+        "merchant": "string (extract clean name, uppercase)",
+        "type": "Debit/Credit",
+        "date": "YYYY-MM-DD",
+        "category": "string (Guess best from: Food, Travel, Shopping, Bills, Other)"
+      }
+    `;
+
+    const result = await model.generateContent(prompt);
+    const text = result.response.text().replace(/```json/g, "").replace(/```/g, "").trim();
+    let data = JSON.parse(text);
+
+    // 2. Check "Memory" (MerchantRule DB)
+    if (data.merchant) {
+      const knownRule = await MerchantRule.findOne({ merchantName: data.merchant });
+
+      if (knownRule) {
+        console.log(`🧠 Memory Hit: Found rule for ${data.merchant}`);
+        data.category = knownRule.category; // Use saved category
+        data.isFromMemory = true;
+      } else {
+        console.log(`🤖 AI New: Learning ${data.merchant}`);
+        // 3. Save to Memory for next time
+        const newRule = new MerchantRule({
+          merchantName: data.merchant,
+          category: data.category
+        });
+        await newRule.save();
+        data.isFromMemory = false;
+      }
     }
+
+    res.json(data);
+
+  } catch (error) {
+    console.error("Error analyzing SMS:", error);
+    res.status(500).json({ message: "Analysis failed" });
+  }
 });
 
-// 2. SYNC EXPENSES (Bulk Add)
-app.post('/api/expenses/sync', async (req, res) => {
-    const expenses = req.body;
-    if (!Array.isArray(expenses)) {
-        return res.status(400).json({ message: "Expected a list of expenses" });
-    }
-
-    try {
-        const operations = expenses.map(exp => ({
-            updateOne: {
-                filter: { id: exp.id },
-                update: { $set: exp },
-                upsert: true
-            }
-        }));
-
-        if (operations.length > 0) {
-            await Expense.bulkWrite(operations);
-        }
-
-        res.status(200).json({ message: "Sync successful" });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ message: "Sync failed" });
-    }
-});
-
-// 3. ADD SINGLE EXPENSE
+// ==========================================
+// 🚀 ROUTE 2: ADD EXPENSE (With User ID)
+// ==========================================
 app.post('/api/expenses', async (req, res) => {
-    const expense = new Expense(req.body);
-    try {
-        const newExpense = await expense.save();
-        res.status(201).json(newExpense);
-    } catch (err) {
-        res.status(400).json({ message: err.message });
-    }
+  try {
+    const { title, amount, date, userId } = req.body;
+
+    if (!userId) return res.status(400).json({ message: "User ID is required" });
+
+    const newExpense = new Expense({ title, amount, date, userId });
+    await newExpense.save();
+    res.status(201).json(newExpense);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 });
 
-// 4. DELETE EXPENSE
-app.delete('/api/expenses/:id', async (req, res) => {
-    try {
-        await Expense.deleteOne({ id: req.params.id });
-        res.json({ message: 'Expense deleted' });
-    } catch (err) {
-        res.status(500).json({ message: err.message });
-    }
+// ==========================================
+// 🚀 ROUTE 3: GET EXPENSES (For Specific User)
+// ==========================================
+app.get('/api/expenses/:userId', async (req, res) => {
+  try {
+    const userId = req.params.userId;
+    const expenses = await Expense.find({ userId: userId }).sort({ date: -1 });
+    res.json(expenses);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 });
 
-// --- START SERVER ---
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Server running on http://localhost:${PORT}`);
-});
+// Start Server
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
