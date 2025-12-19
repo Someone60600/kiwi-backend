@@ -20,7 +20,7 @@ const MONGO_URI = process.env.MONGO_URI;
 // Connect to MongoDB
 if (MONGO_URI) {
   mongoose.connect(MONGO_URI)
-    .then(() => console.log('✅ MongoDB Connected'))
+    .then(() => console.log('✅ MongoDB Connected les go'))
     .catch(err => console.error('❌ MongoDB Connection Error:', err));
 } else {
   console.log('⚠️ Warning: MONGO_URI is missing in Render Environment!');
@@ -93,3 +93,4 @@ app.get('/api/expenses/:userId', async (req, res) => {
 });
 
 app.listen(port, () => console.log(`🚀 Server running on port ${port}`));
+
