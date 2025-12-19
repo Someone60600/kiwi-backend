@@ -6,7 +6,6 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 // Import your Models
 const Expense = require('./models/Expense');
-// Make sure you created models/MerchantRule.js first!
 const MerchantRule = require('./models/MerchantRule'); 
 
 const app = express();
@@ -14,10 +13,11 @@ app.use(cors());
 app.use(bodyParser.json());
 
 // ==========================================
-// ⚠️ IMPORTANT: FILL IN YOUR KEYS BELOW ⚠️
+// ✅ FIXED KEYS (I cleaned these for you)
 // ==========================================
-const MONGO_DB_URL = "mongodb+srv://... (mongodb+srv://someone60600:utsha4035Nandi@cluster0.vdk9sig.mongodb.net/?appName=Cluster0) ..."; 
-const GEMINI_API_KEY = "AIzaSy... (AIzaSyBr5dA-JVVwvihra9Dq-nnf2w-EEvNY1j0) ...";
+// I removed the "... (" and ") ..." garbage. These are now clean strings.
+const MONGO_DB_URL = "mongodb+srv://someone60600:utsha4035Nandi@cluster0.vdk9sig.mongodb.net/?appName=Cluster0"; 
+const GEMINI_API_KEY = "AIzaSyBr5dA-JVVwvihra9Dq-nnf2w-EEvNY1j0";
 
 // Initialize Gemini
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
@@ -28,14 +28,14 @@ mongoose.connect(MONGO_DB_URL)
   .catch(err => console.error('❌ MongoDB Connection Error:', err));
 
 // ==========================================
-// 🚀 ROUTE 1: HYBRID SMS ANALYSIS (New)
+// 🚀 ROUTE 1: HYBRID SMS ANALYSIS
 // ==========================================
 app.post('/api/analyze-sms', async (req, res) => {
   try {
     const { smsText } = req.body;
     if (!smsText) return res.status(400).json({ message: "No SMS text provided" });
 
-    // 1. Ask Gemini to extract details
+    // 1. Ask Gemini
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
     const prompt = `
       Analyze this SMS: "${smsText}"
@@ -53,17 +53,16 @@ app.post('/api/analyze-sms', async (req, res) => {
     const text = result.response.text().replace(/```json/g, "").replace(/```/g, "").trim();
     let data = JSON.parse(text);
 
-    // 2. Check "Memory" (MerchantRule DB)
+    // 2. Check Memory
     if (data.merchant) {
       const knownRule = await MerchantRule.findOne({ merchantName: data.merchant });
 
       if (knownRule) {
         console.log(`🧠 Memory Hit: Found rule for ${data.merchant}`);
-        data.category = knownRule.category; // Use saved category
+        data.category = knownRule.category; 
         data.isFromMemory = true;
       } else {
         console.log(`🤖 AI New: Learning ${data.merchant}`);
-        // 3. Save to Memory for next time
         const newRule = new MerchantRule({
           merchantName: data.merchant,
           category: data.category
@@ -82,15 +81,24 @@ app.post('/api/analyze-sms', async (req, res) => {
 });
 
 // ==========================================
-// 🚀 ROUTE 2: ADD EXPENSE (With User ID)
+// 🚀 ROUTE 2: ADD EXPENSE (Updated for Full Data)
 // ==========================================
 app.post('/api/expenses', async (req, res) => {
   try {
-    const { title, amount, date, userId } = req.body;
+    // 🔍 I added 'category' and 'isIncome' here so you don't lose data!
+    const { title, amount, date, userId, category, isIncome } = req.body;
 
     if (!userId) return res.status(400).json({ message: "User ID is required" });
 
-    const newExpense = new Expense({ title, amount, date, userId });
+    const newExpense = new Expense({ 
+      title, 
+      amount, 
+      date, 
+      userId,
+      originalCategory: category || 'Other', // Save the category
+      isIncome: isIncome || false           // Save income status
+    });
+
     await newExpense.save();
     res.status(201).json(newExpense);
   } catch (error) {
@@ -111,6 +119,17 @@ app.get('/api/expenses/:userId', async (req, res) => {
   }
 });
 
-// Start Server
+// ==========================================
+// 🚀 ROUTE 4: DELETE EXPENSE (Extra Utility)
+// ==========================================
+app.delete('/api/expenses/:id', async (req, res) => {
+  try {
+    await Expense.findByIdAndDelete(req.params.id);
+    res.json({ message: "Deleted" });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
