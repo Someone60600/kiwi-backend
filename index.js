@@ -36,7 +36,7 @@ app.post('/api/analyze-sms', async (req, res) => {
     if (!smsText) return res.status(400).json({ message: "No SMS text provided" });
 
     // 1. Ask Gemini
-    const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
     const prompt = `
       Analyze this SMS: "${smsText}"
       Return strictly JSON (no markdown):
@@ -134,3 +134,4 @@ app.delete('/api/expenses/:id', async (req, res) => {
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+
